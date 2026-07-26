@@ -40,10 +40,15 @@ class Settings(BaseSettings):
     default_symbols: list[str] = ["GOLD_10G", "SILVER_1KG"]
 
     # Every distinct symbol gets two permanent background threads (price +
-    # sentiment), each polling forever. With no auth in front of this app,
-    # an unbounded symbol count is an easy resource-exhaustion vector —
-    # cap how many distinct symbols the whole app will ever track at once.
+    # sentiment), each polling forever. Cap how many distinct symbols the
+    # whole app will ever track at once, as a resource-exhaustion backstop.
     max_tracked_symbols: int = 200
+
+    # Session tokens (JWT). CHANGE THIS via env var for any non-local
+    # deployment — anyone who knows the secret can forge valid login tokens
+    # for any user. Generate one with: python -c "import secrets; print(secrets.token_hex(32))"
+    jwt_secret_key: str = "insecure-dev-secret-change-me"
+    jwt_expire_minutes: int = 60 * 24 * 30  # 30 days — no refresh-token flow, so this is the full session length
 
     # Hugging Face Inference API (serverless, free tier) — replaces the
     # local-only Ollama/Qwen setup so this backend can run on free hosting

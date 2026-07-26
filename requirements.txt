@@ -14,3 +14,5 @@ rapidfuzz
 numpy
 trafilatura
 lxml_html_clean
+pyjwt
+bcrypt

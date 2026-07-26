@@ -5,13 +5,13 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from bson import ObjectId
-from bson.errors import InvalidId
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pymongo.errors import DuplicateKeyError
 
 from app.article_fetcher import fetch_full_text
+from app.auth import create_access_token, get_current_user_id, hash_password, verify_password
 from app.config import settings
 from app.data_source import SYMBOL_ALIASES
 from app.hf_summarize import summarize_text_hf
@@ -19,8 +19,8 @@ from app.mongo import init_indexes_and_collections, portfolio, sentiment_scores,
 from app.prediction import predict_price_curve
 from app.scraper import scraper_manager
 from app.schemas import (
-    UserCreate, UserOut, PortfolioCreate, PortfolioOut, StockOut, StockTimeSeriesOut, PricePoint,
-    SymbolSuggestion, WishlistOut, SentimentOut, SentimentArticle, PredictionOut, ArticleFullText,
+    UserCreate, UserLogin, UserOut, TokenOut, PortfolioCreate, PortfolioOut, StockOut, StockTimeSeriesOut,
+    PricePoint, SymbolSuggestion, WishlistOut, SentimentOut, SentimentArticle, PredictionOut, ArticleFullText,
     ArticleSummary,
 )
 from app.sentiment_scraper import scan_and_score, sentiment_scraper_manager
@@ -36,15 +36,12 @@ DEFAULT_SYMBOL_NAMES = {
 }
 
 
-def oid(user_id: str) -> ObjectId:
-    try:
-        return ObjectId(user_id)
-    except InvalidId:
-        raise HTTPException(400, "Invalid user id")
-
-
 def user_out(doc: dict) -> UserOut:
     return UserOut(id=str(doc["_id"]), username=doc["username"], email=doc["email"], created_at=doc["created_at"])
+
+
+def issue_token(doc: dict) -> TokenOut:
+    return TokenOut(access_token=create_access_token(str(doc["_id"])), user=user_out(doc))
 
 
 def news_query_for(symbol: str, name: Optional[str]) -> str:
@@ -71,9 +68,12 @@ def _json_default(value):
     return str(value)
 
 
-def add_to_portfolio(user_id: ObjectId, symbol: str) -> StockOut:
-    name = DEFAULT_SYMBOL_NAMES.get(symbol)
-
+def ensure_symbol_tracked(symbol: str, name: Optional[str]):
+    """Start (or confirm already-running) price + sentiment scraper threads
+    for `symbol`, subject to the app-wide symbol cap. Shared by both the
+    portfolio and the wishlist — a bookmarked stock gets the same live
+    price/sentiment data as one actually added to the portfolio, so the
+    dashboard can show real detail cards for it, not just a name."""
     if symbol not in scraper_manager.tracked_symbols():
         if len(scraper_manager.tracked_symbols()) >= settings.max_tracked_symbols:
             raise HTTPException(
@@ -81,18 +81,23 @@ def add_to_portfolio(user_id: ObjectId, symbol: str) -> StockOut:
                 f"This app is already tracking the max of {settings.max_tracked_symbols} distinct "
                 f"symbols. '{symbol}' isn't one of them — remove an unused one first.",
             )
+    scraper_manager.ensure_started(symbol)
+    sentiment_scraper_manager.ensure_started(symbol, news_query_for(symbol, name))
 
+
+def add_to_portfolio(user_id: ObjectId, symbol: str) -> StockOut:
+    name = DEFAULT_SYMBOL_NAMES.get(symbol)
+    ensure_symbol_tracked(symbol, name)
     portfolio.update_one(
         {"user_id": user_id, "symbol": symbol},
         {"$setOnInsert": {"name": name, "added_at": dt.datetime.now(dt.timezone.utc)}},
         upsert=True,
     )
-    scraper_manager.ensure_started(symbol)
-    sentiment_scraper_manager.ensure_started(symbol, news_query_for(symbol, name))
     return StockOut(symbol=symbol, name=name)
 
 
 def add_to_wishlist(user_id: ObjectId, symbol: str, name: Optional[str], exchange: Optional[str]):
+    ensure_symbol_tracked(symbol, name)
     wishlist.update_one(
         {"user_id": user_id, "symbol": symbol},
         {"$setOnInsert": {"name": name, "exchange": exchange, "added_at": dt.datetime.now(dt.timezone.utc)}},
@@ -132,13 +137,17 @@ app.add_middleware(
 
 
 # --------------------------------------------------------------------------
-# Users
+# Auth — password-based. Every endpoint below that touches a specific
+# user's data uses get_current_user_id (verifies the bearer token) instead
+# of trusting a client-supplied user_id, so a valid session can only ever
+# act on its own account.
 # --------------------------------------------------------------------------
-@app.post("/users", response_model=UserOut, status_code=201)
+@app.post("/users", response_model=TokenOut, status_code=201)
 def create_user(payload: UserCreate):
     doc = {
         "username": payload.username,
         "email": payload.email,
+        "password_hash": hash_password(payload.password),
         "created_at": dt.datetime.now(dt.timezone.utc),
     }
     try:
@@ -151,17 +160,20 @@ def create_user(payload: UserCreate):
     for symbol in settings.default_symbols:
         add_to_portfolio(doc["_id"], symbol)
 
-    return user_out(doc)
+    return issue_token(doc)
 
 
-@app.get("/users", response_model=list[UserOut])
-def list_users():
-    return [user_out(d) for d in users.find().sort("_id", 1)]
+@app.post("/auth/login", response_model=TokenOut)
+def login(payload: UserLogin):
+    doc = users.find_one({"$or": [{"username": payload.username_or_email}, {"email": payload.username_or_email}]})
+    if not doc or not doc.get("password_hash") or not verify_password(payload.password, doc["password_hash"]):
+        raise HTTPException(401, "Incorrect username/email or password")
+    return issue_token(doc)
 
 
-@app.get("/users/{user_id}", response_model=UserOut)
-def get_user(user_id: str):
-    doc = users.find_one({"_id": oid(user_id)})
+@app.get("/users/me", response_model=UserOut)
+def get_me(user_id: ObjectId = Depends(get_current_user_id)):
+    doc = users.find_one({"_id": user_id})
     if not doc:
         raise HTTPException(404, "User not found")
     return user_out(doc)
@@ -171,62 +183,53 @@ def get_user(user_id: str):
 # Portfolio
 # --------------------------------------------------------------------------
 @app.post("/portfolio", response_model=PortfolioOut, status_code=201)
-def create_or_update_portfolio(payload: PortfolioCreate):
-    """Given a user and a list of stock symbols (as would come from an
-    upstream 'get stock name' API), attach those stocks to the user's
-    portfolio and make sure each one has a live scraper thread running."""
-    user_oid = oid(payload.user_id)
-    if not users.find_one({"_id": user_oid}):
-        raise HTTPException(404, "User not found")
-
+def create_or_update_portfolio(payload: PortfolioCreate, user_id: ObjectId = Depends(get_current_user_id)):
+    """Attach the given stock symbols to the authenticated user's portfolio
+    and make sure each one has a live scraper thread running."""
     requested = [s.strip().upper() for s in payload.symbols if s.strip()]
     # Gold and silver are always included, even if the caller didn't ask for them.
     all_symbols = list(dict.fromkeys(settings.default_symbols + requested))
 
-    stocks_out = [add_to_portfolio(user_oid, symbol) for symbol in all_symbols]
+    stocks_out = [add_to_portfolio(user_id, symbol) for symbol in all_symbols]
 
-    return PortfolioOut(user_id=payload.user_id, stocks=stocks_out, wishlist=get_wishlist(user_oid))
+    return PortfolioOut(user_id=str(user_id), stocks=stocks_out, wishlist=get_wishlist(user_id))
 
 
-@app.get("/portfolio/{user_id}", response_model=PortfolioOut)
-def get_portfolio(user_id: str):
-    user_oid = oid(user_id)
-    if not users.find_one({"_id": user_oid}):
-        raise HTTPException(404, "User not found")
-    stocks = [StockOut(symbol=d["symbol"], name=d.get("name")) for d in portfolio.find({"user_id": user_oid})]
-    return PortfolioOut(user_id=user_id, stocks=stocks, wishlist=get_wishlist(user_oid))
+@app.get("/portfolio", response_model=PortfolioOut)
+def get_portfolio(user_id: ObjectId = Depends(get_current_user_id)):
+    stocks = [StockOut(symbol=d["symbol"], name=d.get("name")) for d in portfolio.find({"user_id": user_id})]
+    return PortfolioOut(user_id=str(user_id), stocks=stocks, wishlist=get_wishlist(user_id))
 
 
 # --------------------------------------------------------------------------
 # Wishlist — every stock a user has searched for gets remembered here,
 # surfaced back to them on every portfolio/wishlist fetch.
 # --------------------------------------------------------------------------
-@app.get("/users/{user_id}/wishlist", response_model=WishlistOut)
-def get_user_wishlist(user_id: str):
-    user_oid = oid(user_id)
-    if not users.find_one({"_id": user_oid}):
-        raise HTTPException(404, "User not found")
-    return WishlistOut(user_id=user_id, wishlist=get_wishlist(user_oid))
+@app.get("/wishlist", response_model=WishlistOut)
+def get_user_wishlist(user_id: ObjectId = Depends(get_current_user_id)):
+    return WishlistOut(user_id=str(user_id), wishlist=get_wishlist(user_id))
 
 
 # --------------------------------------------------------------------------
-# Symbol search (typeahead for "what stock did they mean") — searching as a
-# given user automatically wishlists the top match for that user.
+# Symbol search (typeahead for "what stock did they mean") — searching
+# automatically wishlists the top match for the authenticated user.
 # --------------------------------------------------------------------------
 @app.get("/symbols/search", response_model=list[SymbolSuggestion])
-def symbol_search(q: str = Query(min_length=1), limit: int = Query(default=8, le=20), user_id: Optional[str] = None):
+def symbol_search(
+    q: str = Query(min_length=1),
+    limit: int = Query(default=8, le=20),
+    user_id: ObjectId = Depends(get_current_user_id),
+):
     results = search_symbols(q, limit)
-    if user_id and results:
-        user_oid = oid(user_id)
-        if not users.find_one({"_id": user_oid}):
-            raise HTTPException(404, "User not found")
+    if results:
         top = results[0]
-        add_to_wishlist(user_oid, top["symbol"], top.get("name"), top.get("exchange"))
+        add_to_wishlist(user_id, top["symbol"], top.get("name"), top.get("exchange"))
     return results
 
 
 # --------------------------------------------------------------------------
-# Stock time-series
+# Stock time-series — not user-scoped (a symbol's price history isn't
+# private data), no auth required.
 # --------------------------------------------------------------------------
 @app.get("/stocks/{symbol}/timeseries", response_model=StockTimeSeriesOut)
 def get_stock_timeseries(symbol: str, limit: int = Query(default=1000, le=10000)):
@@ -246,7 +249,7 @@ def get_stock_timeseries(symbol: str, limit: int = Query(default=1000, le=10000)
 
 
 # --------------------------------------------------------------------------
-# Sentiment
+# Sentiment — also not user-scoped.
 # --------------------------------------------------------------------------
 @app.get("/stocks/{symbol}/sentiment", response_model=SentimentOut)
 def get_stock_sentiment(symbol: str, limit: int = Query(default=50, le=500)):

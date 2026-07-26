@@ -23,5 +23,11 @@ services:
         sync: false # https://huggingface.co/settings/tokens
       - key: CORS_ALLOW_ORIGINS
         sync: false # your Vercel URL, e.g. https://your-app.vercel.app
+      # Signs session tokens. generateValue makes Render mint a random secret
+      # once and reuse it — never commit a real one here, and never leave the
+      # app's insecure in-code default in place: anyone knowing it can forge
+      # a valid login token for any account.
+      - key: JWT_SECRET_KEY
+        generateValue: true
       - key: SCRAPE_INTERVAL_SECONDS
         value: "30"

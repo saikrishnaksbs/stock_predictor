@@ -1,3 +1,5 @@
+import { getToken } from "./auth";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://127.0.0.1:8123";
 
 export type User = {
@@ -5,6 +7,12 @@ export type User = {
   username: string;
   email: string;
   created_at: string;
+};
+
+export type AuthResponse = {
+  access_token: string;
+  token_type: string;
+  user: User;
 };
 
 export type Stock = {
@@ -96,9 +104,14 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${API_BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...init?.headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
     cache: "no-store",
   });
   if (!res.ok) {
@@ -109,23 +122,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  listUsers: () => request<User[]>("/users"),
-  createUser: (username: string, email: string) =>
-    request<User>("/users", { method: "POST", body: JSON.stringify({ username, email }) }),
-  getPortfolio: (userId: string) => request<Portfolio>(`/portfolio/${userId}`),
-  updatePortfolio: (userId: string, symbols: string[]) =>
-    request<Portfolio>("/portfolio", {
+  signup: (username: string, email: string, password: string) =>
+    request<AuthResponse>("/users", { method: "POST", body: JSON.stringify({ username, email, password }) }),
+  login: (usernameOrEmail: string, password: string) =>
+    request<AuthResponse>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ user_id: userId, symbols }),
+      body: JSON.stringify({ username_or_email: usernameOrEmail, password }),
     }),
+  getMe: () => request<User>("/users/me"),
+
+  getPortfolio: () => request<Portfolio>("/portfolio"),
+  updatePortfolio: (symbols: string[]) =>
+    request<Portfolio>("/portfolio", { method: "POST", body: JSON.stringify({ symbols }) }),
+  getWishlist: () => request<{ user_id: string; wishlist: Stock[] }>("/wishlist"),
+
   getTimeSeries: (symbol: string, limit = 500) =>
     request<StockTimeSeries>(`/stocks/${encodeURIComponent(symbol)}/timeseries?limit=${limit}`),
-  searchSymbols: (q: string, userId?: string, limit = 8) =>
-    request<SymbolSuggestion[]>(
-      `/symbols/search?q=${encodeURIComponent(q)}&limit=${limit}${userId ? `&user_id=${userId}` : ""}`
-    ),
-  getWishlist: (userId: string) =>
-    request<{ user_id: string; wishlist: Stock[] }>(`/users/${userId}/wishlist`),
+  searchSymbols: (q: string, limit = 8) =>
+    request<SymbolSuggestion[]>(`/symbols/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   getSentiment: (symbol: string, limit = 20) =>
     request<Sentiment>(`/stocks/${encodeURIComponent(symbol)}/sentiment?limit=${limit}`),
   getPrediction: (symbol: string) =>

@@ -2,18 +2,16 @@
 
 import { useEffect, useRef, useState } from "react";
 import { api, type SymbolSuggestion } from "@/lib/api";
-import { inputStyle } from "./UserPanel";
+import { inputStyle } from "@/lib/sharedStyles";
 
 const DEBOUNCE_MS = 250;
 
 export default function SymbolAutocomplete({
   onSelect,
   placeholder,
-  userId,
 }: {
   onSelect: (suggestion: SymbolSuggestion) => void;
   placeholder?: string;
-  userId?: string;
 }) {
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<SymbolSuggestion[]>([]);
@@ -33,7 +31,7 @@ export default function SymbolAutocomplete({
 
     debounceRef.current = setTimeout(async () => {
       try {
-        const results = await api.searchSymbols(query.trim(), userId);
+        const results = await api.searchSymbols(query.trim());
         setSuggestions(results);
         setOpen(results.length > 0);
         setActiveIndex(-1);

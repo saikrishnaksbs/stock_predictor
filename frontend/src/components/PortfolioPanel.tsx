@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { api, type SymbolSuggestion, type User } from "@/lib/api";
-import { panelStyle, headingStyle, labelStyle, buttonStyle } from "./UserPanel";
+import { panelStyle, headingStyle, labelStyle, buttonStyle } from "@/lib/sharedStyles";
 import SymbolAutocomplete from "./SymbolAutocomplete";
 
 export default function PortfolioPanel({
@@ -31,10 +31,7 @@ export default function PortfolioPanel({
     setBusy(true);
     setError(null);
     try {
-      const portfolio = await api.updatePortfolio(
-        user.id,
-        pending.map((p) => p.symbol)
-      );
+      const portfolio = await api.updatePortfolio(pending.map((p) => p.symbol));
       onUpdated(portfolio.stocks.map((s) => s.symbol));
       setPending([]);
     } catch {
@@ -49,7 +46,7 @@ export default function PortfolioPanel({
       <h2 style={headingStyle}>Add stocks to {user.username}&apos;s portfolio</h2>
       <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 10 }}>
         <div style={{ display: "flex", gap: 8 }}>
-          <SymbolAutocomplete onSelect={addPending} userId={user.id} />
+          <SymbolAutocomplete onSelect={addPending} />
           <button type="submit" style={buttonStyle} disabled={busy || pending.length === 0}>
             {busy ? "Adding…" : `Add${pending.length ? ` (${pending.length})` : ""}`}
           </button>
