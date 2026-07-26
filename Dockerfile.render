@@ -1,0 +1,39 @@
+# Dedicated Dockerfile for Render's free tier: MongoDB runs embedded in this
+# same container (via entrypoint.sh) since Render's free plan doesn't offer a
+# persistent/networked database service. Data does NOT survive a container
+# restart — see render.yaml for the full tradeoff explanation.
+#
+# Kept separate from the main Dockerfile (used by docker-compose for local
+# dev against a real, separate, persistent Mongo container) because
+# mongodb-org-server is only published for amd64 on Debian — building this
+# natively fails on Apple Silicon. Render's build servers are amd64, so this
+# is only ever built there, not locally.
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# MongoDB's official repo only ships packages for specific Debian codenames —
+# pinned to bookworm (Debian 12) above so this resolves reliably.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        curl gnupg ca-certificates \
+    && curl -fsSL https://pgp.mongodb.com/server-7.0.asc | gpg --dearmor -o /usr/share/keyrings/mongodb-server-7.0.gpg \
+    && echo "deb [ signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/debian bookworm/mongodb-org/7.0 main" \
+        > /etc/apt/sources.list.d/mongodb-org-7.0.list \
+    && apt-get update && apt-get install -y --no-install-recommends mongodb-org-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && mkdir -p /data/db
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Playwright's pip package is just the driver — the browser binary and its
+# OS-level libraries (fonts, codecs, etc.) still need a separate install step,
+# needed for the on-demand article full-text fetch (app/article_fetcher.py).
+RUN playwright install --with-deps chromium
+
+COPY app ./app
+COPY entrypoint.sh .
+RUN chmod +x entrypoint.sh
+
+EXPOSE 8000
+ENTRYPOINT ["./entrypoint.sh"]

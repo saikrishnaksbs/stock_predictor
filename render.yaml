@@ -2,16 +2,21 @@
 # In the Render dashboard: New -> Blueprint -> connect this repo -> it reads
 # this file automatically. Fields marked "sync: false" are prompted for in
 # the dashboard rather than stored here (secrets shouldn't live in git).
+#
+# MongoDB runs embedded in this same container (see entrypoint.sh) — no
+# separate database service, no card-verified cloud account needed. The
+# tradeoff: Render's free tier has no persistent disk, so all data (users,
+# portfolios, price/sentiment history) is wiped every time the container
+# restarts — which happens after ~15 min of no incoming traffic. Fine for a
+# demo/personal dashboard; not a real data store.
 services:
   - type: web
     name: stock-predictor-api
     runtime: docker
-    dockerfilePath: ./Dockerfile
+    dockerfilePath: ./Dockerfile.render
     plan: free
     healthCheckPath: /health
     envVars:
-      - key: MONGO_URI
-        sync: false # paste your MongoDB Atlas connection string here
       - key: MONGO_DB_NAME
         value: stockdb
       - key: HF_API_TOKEN
