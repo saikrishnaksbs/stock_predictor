@@ -1,0 +1,22 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# In the Render dashboard: New -> Blueprint -> connect this repo -> it reads
+# this file automatically. Fields marked "sync: false" are prompted for in
+# the dashboard rather than stored here (secrets shouldn't live in git).
+services:
+  - type: web
+    name: stock-predictor-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: MONGO_URI
+        sync: false # paste your MongoDB Atlas connection string here
+      - key: MONGO_DB_NAME
+        value: stockdb
+      - key: HF_API_TOKEN
+        sync: false # https://huggingface.co/settings/tokens
+      - key: CORS_ALLOW_ORIGINS
+        sync: false # your Vercel URL, e.g. https://your-app.vercel.app
+      - key: SCRAPE_INTERVAL_SECONDS
+        value: "30"

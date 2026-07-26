@@ -1,0 +1,36 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: stockdb-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - stockdb_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand({ping:1})"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    container_name: stockdb-api
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGO_URI: mongodb://mongo:27017
+      MONGO_DB_NAME: stockdb
+      SCRAPE_INTERVAL_SECONDS: "30"
+      # Free token from https://huggingface.co/settings/tokens — set it in a
+      # .env file next to this compose file (HF_API_TOKEN=hf_xxx), never commit
+      # it. Sentiment/summarization silently fall back without one; nothing
+      # else in the app depends on it.
+      HF_API_TOKEN: ${HF_API_TOKEN:-}
+    ports:
+      - "8123:8000"
+
+volumes:
+  stockdb_mongo_data:

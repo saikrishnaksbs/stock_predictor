@@ -1,0 +1,16 @@
+feedparser
+ddgs
+playwright
+email-validator
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+yfinance
+pymongo
+python-dotenv
+requests
+rapidfuzz
+numpy
+trafilatura
+lxml_html_clean
