@@ -16,6 +16,20 @@ const inputStyle: React.CSSProperties = {
   width: "100%",
 };
 
+function describeAuthError(err: unknown, action: "log in" | "create account"): string {
+  if (!(err instanceof ApiError)) return `Could not ${action}. Check your connection and try again.`;
+  switch (err.status) {
+    case 401:
+      return "Incorrect username/email or password.";
+    case 409:
+      return "Username or email already taken.";
+    case 422:
+      return "Username must be at least 3 characters, email must be valid, and password must be at least 8 characters.";
+    default:
+      return `Could not ${action} (server error ${err.status}). Please try again.`;
+  }
+}
+
 const buttonStyle: React.CSSProperties = {
   fontSize: 14,
   fontWeight: 600,
@@ -55,7 +69,7 @@ export default function LoginPage() {
       setSession(res.access_token, res.user);
       router.push("/dashboard");
     } catch (err) {
-      setError(err instanceof ApiError && err.status === 401 ? "Incorrect username/email or password." : "Could not log in.");
+      setError(describeAuthError(err, "log in"));
     } finally {
       setBusy(false);
     }
@@ -70,11 +84,7 @@ export default function LoginPage() {
       setSession(res.access_token, res.user);
       router.push("/dashboard");
     } catch (err) {
-      setError(
-        err instanceof ApiError && err.status === 409
-          ? "Username or email already taken."
-          : "Could not create account — password must be at least 8 characters."
-      );
+      setError(describeAuthError(err, "create account"));
     } finally {
       setBusy(false);
     }
