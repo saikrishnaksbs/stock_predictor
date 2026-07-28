@@ -31,10 +31,14 @@ export default function Navbar({ user }: { user: User }) {
   async function handleTimezoneChange(tz: string) {
     setSaving(true);
     try {
+      const token = localStorage.getItem("stock_predictor_token") || "";
       const updated = await api.updateTimezone(tz);
-      setSession(localStorage.getItem("stock_predictor_token") || "", updated);
+      setSession(token, updated);
       setShowTimezoneMenu(false);
+      // Reload user data to reflect timezone change
+      window.location.reload();
     } catch (err) {
+      console.error("Timezone update failed:", err);
       alert("Failed to update timezone");
     } finally {
       setSaving(false);
