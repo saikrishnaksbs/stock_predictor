@@ -19,7 +19,12 @@ class UserOut(BaseModel):
     id: str
     username: str
     email: str
+    timezone: str = "Asia/Kolkata"  # Default to IST
     created_at: dt.datetime
+
+
+class UserUpdateTimezone(BaseModel):
+    timezone: str
 
 
 class TokenOut(BaseModel):

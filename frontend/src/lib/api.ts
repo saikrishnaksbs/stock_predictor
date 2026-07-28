@@ -6,6 +6,7 @@ export type User = {
   id: string;
   username: string;
   email: string;
+  timezone: string;
   created_at: string;
 };
 
@@ -130,6 +131,8 @@ export const api = {
       body: JSON.stringify({ username_or_email: usernameOrEmail, password }),
     }),
   getMe: () => request<User>("/users/me"),
+  updateTimezone: (timezone: string) =>
+    request<User>("/users/me/timezone", { method: "PUT", body: JSON.stringify({ timezone }) }),
 
   getPortfolio: () => request<Portfolio>("/portfolio"),
   updatePortfolio: (symbols: string[]) =>

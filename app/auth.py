@@ -58,3 +58,15 @@ def get_current_user_id(authorization: str = Header(default=None)) -> ObjectId:
         raise HTTPException(401, "Session expired, please log in again")
     except (jwt.InvalidTokenError, InvalidId):
         raise HTTPException(401, "Invalid session token")
+
+
+def get_current_user_id_optional(authorization: str = Header(default=None)) -> ObjectId | None:
+    """Optional version of get_current_user_id — returns None if not authenticated."""
+    if not authorization or not authorization.startswith("Bearer "):
+        return None
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        user_id = decode_access_token(token)
+        return ObjectId(user_id)
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, InvalidId):
+        return None

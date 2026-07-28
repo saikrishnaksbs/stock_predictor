@@ -11,17 +11,18 @@ from fastapi.responses import StreamingResponse
 from pymongo.errors import DuplicateKeyError
 
 from app.article_fetcher import fetch_full_text
-from app.auth import create_access_token, get_current_user_id, hash_password, verify_password
+from app.auth import create_access_token, get_current_user_id, get_current_user_id_optional, hash_password, verify_password
 from app.config import settings
 from app.data_source import SYMBOL_ALIASES
 from app.hf_summarize import summarize_text_hf
+from app.market_hours import filter_articles_by_market_hours
 from app.mongo import init_indexes_and_collections, portfolio, sentiment_scores, stock_prices, users, wishlist
 from app.prediction import predict_price_curve
 from app.scraper import scraper_manager
 from app.schemas import (
     UserCreate, UserLogin, UserOut, TokenOut, PortfolioCreate, PortfolioOut, StockOut, StockTimeSeriesOut,
     PricePoint, SymbolSuggestion, WishlistOut, SentimentOut, SentimentArticle, PredictionOut, ArticleFullText,
-    ArticleSummary,
+    ArticleSummary, UserUpdateTimezone,
 )
 from app.sentiment_scraper import scan_and_score, sentiment_scraper_manager
 from app.symbol_search import search_symbols
@@ -37,7 +38,13 @@ DEFAULT_SYMBOL_NAMES = {
 
 
 def user_out(doc: dict) -> UserOut:
-    return UserOut(id=str(doc["_id"]), username=doc["username"], email=doc["email"], created_at=doc["created_at"])
+    return UserOut(
+        id=str(doc["_id"]),
+        username=doc["username"],
+        email=doc["email"],
+        timezone=doc.get("timezone", "Asia/Kolkata"),
+        created_at=doc["created_at"],
+    )
 
 
 def issue_token(doc: dict) -> TokenOut:
@@ -148,6 +155,7 @@ def create_user(payload: UserCreate):
         "username": payload.username,
         "email": payload.email,
         "password_hash": hash_password(payload.password),
+        "timezone": "Asia/Kolkata",
         "created_at": dt.datetime.now(dt.timezone.utc),
     }
     try:
@@ -176,6 +184,15 @@ def get_me(user_id: ObjectId = Depends(get_current_user_id)):
     doc = users.find_one({"_id": user_id})
     if not doc:
         raise HTTPException(404, "User not found")
+    return user_out(doc)
+
+
+@app.put("/users/me/timezone", response_model=UserOut)
+def update_timezone(payload: UserUpdateTimezone, user_id: ObjectId = Depends(get_current_user_id)):
+    result = users.update_one({"_id": user_id}, {"$set": {"timezone": payload.timezone}})
+    if result.matched_count == 0:
+        raise HTTPException(404, "User not found")
+    doc = users.find_one({"_id": user_id})
     return user_out(doc)
 
 
@@ -252,12 +269,29 @@ def get_stock_timeseries(symbol: str, limit: int = Query(default=1000, le=10000)
 # Sentiment — also not user-scoped.
 # --------------------------------------------------------------------------
 @app.get("/stocks/{symbol}/sentiment", response_model=SentimentOut)
-def get_stock_sentiment(symbol: str, limit: int = Query(default=50, le=500)):
+def get_stock_sentiment(
+    symbol: str,
+    limit: int = Query(default=50, le=500),
+    user_id: Optional[ObjectId] = Depends(get_current_user_id_optional),
+):
     """Recent news-derived sentiment for a symbol: each article's own score,
-    plus the running average. A headline that keeps resurfacing across scrapes
-    is only counted once (see sentiment_scraper.py's dedup)."""
+    plus the running average. Filtered by market hours if user is authenticated.
+    A headline that keeps resurfacing across scrapes is only counted once."""
     symbol = symbol.strip().upper()
-    rows = list(sentiment_scores.find({"symbol": symbol}).sort("time", -1).limit(limit))
+    rows = list(sentiment_scores.find({"symbol": symbol}).sort("time", -1).limit(limit * 2))
+
+    # Get user's timezone if authenticated
+    user_timezone = "Asia/Kolkata"
+    if user_id:
+        user_doc = users.find_one({"_id": user_id})
+        if user_doc:
+            user_timezone = user_doc.get("timezone", "Asia/Kolkata")
+
+    # Filter by market hours if user provided
+    if user_id:
+        rows = filter_articles_by_market_hours(rows, user_timezone)[:limit]
+    else:
+        rows = rows[:limit]
 
     avg_score = sum(r["score"] for r in rows) / len(rows) if rows else 0.0
     return SentimentOut(
