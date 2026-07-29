@@ -15,7 +15,7 @@ from app.auth import create_access_token, get_current_user_id, get_current_user_
 from app.config import settings
 from app.data_source import SYMBOL_ALIASES
 from app.hf_summarize import summarize_text_hf
-from app.market_hours import filter_articles_by_market_hours
+from app.market_hours import MAX_ARTICLE_AGE_DAYS, filter_articles_by_market_hours
 from app.mongo import init_indexes_and_collections, portfolio, sentiment_scores, stock_prices, users, wishlist
 from app.prediction import predict_price_curve
 from app.scraper import scraper_manager
@@ -52,10 +52,22 @@ def issue_token(doc: dict) -> TokenOut:
 
 
 def news_query_for(symbol: str, name: Optional[str]) -> str:
-    """What to search news for — prefer the human name (better recall than a
-    raw ticker), falling back to the symbol with its exchange suffix stripped."""
+    """What to search news for — prefer an explicit override (see
+    SYMBOL_ALIASES' "news_query"), then the human name, then the symbol with
+    its exchange suffix stripped.
+
+    Display names like "Gold (per 10g, NSE GoldBees)" carry UI-only detail
+    (unit, exchange) that Google News treats as literal required terms — that
+    parenthetical combo is specific enough that it matches ~0 real headlines.
+    A single bare commodity word like "Silver" is the opposite problem: too
+    broad, pulling in unrelated noise (Commonwealth Games medal reports).
+    SYMBOL_ALIASES' "news_query" exists for exactly these cases; anything not
+    in that table falls back to stripping the name's parenthetical suffix."""
+    alias = SYMBOL_ALIASES.get(symbol)
+    if alias and alias.get("news_query"):
+        return alias["news_query"]
     if name:
-        return name
+        return name.split("(")[0].strip() or name
     return symbol.split(".")[0].replace("_", " ")
 
 
@@ -275,10 +287,18 @@ def get_stock_sentiment(
     user_id: Optional[ObjectId] = Depends(get_current_user_id_optional),
 ):
     """Recent news-derived sentiment for a symbol: each article's own score,
-    plus the running average. Filtered by market hours if user is authenticated.
+    plus the running average. Anything older than 3 days is dropped for every
+    caller; market-hours filtering (day-of-week/time-of-day) additionally
+    applies once the caller is authenticated, using their saved timezone.
     A headline that keeps resurfacing across scrapes is only counted once."""
     symbol = symbol.strip().upper()
-    rows = list(sentiment_scores.find({"symbol": symbol}).sort("time", -1).limit(limit * 2))
+    cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=MAX_ARTICLE_AGE_DAYS)
+    rows = list(
+        sentiment_scores.find({
+            "symbol": symbol,
+            "$or": [{"published_at": {"$gte": cutoff}}, {"published_at": None}],
+        }).sort("time", -1).limit(limit * 2)
+    )
 
     # Get user's timezone if authenticated
     user_timezone = "Asia/Kolkata"

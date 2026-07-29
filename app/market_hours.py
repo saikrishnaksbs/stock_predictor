@@ -2,13 +2,24 @@
 import datetime as dt
 from typing import Optional
 
+MAX_ARTICLE_AGE_DAYS = 3
 
-def is_market_hours(published_at: Optional[dt.datetime], user_timezone: str = "Asia/Kolkata") -> bool:
+
+def is_market_hours(
+    published_at: Optional[dt.datetime],
+    user_timezone: str = "Asia/Kolkata",
+    max_age_days: int = MAX_ARTICLE_AGE_DAYS,
+) -> bool:
     """
     Check if an article was published during Indian market hours.
 
     Market hours: 9:30 AM to 4:00 PM IST, Monday-Friday.
     Also includes articles published Friday 4:00+ PM through Monday 9:29 AM.
+
+    Articles older than `max_age_days` are always excluded, regardless of
+    which weekday/time they happen to fall on — the weekday+time check alone
+    can't distinguish this Friday's 2pm article from one from 2024, since it
+    only looks at time-of-day and day-of-week, not the actual date.
     """
     if not published_at:
         return True  # If no publish time, include it
@@ -22,6 +33,10 @@ def is_market_hours(published_at: Optional[dt.datetime], user_timezone: str = "A
         published_at = pytz.utc.localize(published_at)
     elif published_at.tzinfo != ist:
         published_at = published_at.astimezone(ist)
+
+    cutoff = dt.datetime.now(pytz.utc) - dt.timedelta(days=max_age_days)
+    if published_at < cutoff:
+        return False
 
     weekday = published_at.weekday()  # 0=Monday, 4=Friday, 5=Saturday, 6=Sunday
     hour = published_at.hour

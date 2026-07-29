@@ -19,10 +19,22 @@ logger = logging.getLogger(__name__)
 # India, so their unit price already reflects the real domestic INR market.
 SYMBOL_ALIASES = {
     # GOLDBEES: 1 unit ~= 1/100 gram of gold -> price/gram = unit_price * 100
-    "GOLD_10G": {"base": "GOLDBEES.NS", "unit_factor": 1000, "name": "Gold (per 10g, NSE GoldBees)"},
-    "GOLD_1KG": {"base": "GOLDBEES.NS", "unit_factor": 100000, "name": "Gold (per 1kg, NSE GoldBees)"},
+    # "news_query" is what actually gets sent to news search — kept apart from
+    # "name" (the UI label) because a bare commodity word like "Silver" pulls
+    # in unrelated noise (e.g. Commonwealth Games medal reports).
+    "GOLD_10G": {
+        "base": "GOLDBEES.NS", "unit_factor": 1000,
+        "name": "Gold (per 10g, NSE GoldBees)", "news_query": "gold price india",
+    },
+    "GOLD_1KG": {
+        "base": "GOLDBEES.NS", "unit_factor": 100000,
+        "name": "Gold (per 1kg, NSE GoldBees)", "news_query": "gold price india",
+    },
     # SILVERBEES: 1 unit ~= 1 gram of silver -> price/gram = unit_price
-    "SILVER_1KG": {"base": "SILVERBEES.NS", "unit_factor": 1000, "name": "Silver (per 1kg, NSE SilverBees)"},
+    "SILVER_1KG": {
+        "base": "SILVERBEES.NS", "unit_factor": 1000,
+        "name": "Silver (per 1kg, NSE SilverBees)", "news_query": "silver price india",
+    },
 }
 
 
