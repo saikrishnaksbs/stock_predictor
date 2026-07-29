@@ -33,8 +33,13 @@ class TokenOut(BaseModel):
     user: UserOut
 
 
+class PortfolioSymbolIn(BaseModel):
+    symbol: str
+    name: Optional[str] = None
+
+
 class PortfolioCreate(BaseModel):
-    symbols: list[str] = Field(min_length=1)
+    symbols: list[PortfolioSymbolIn] = Field(min_length=1)
 
 
 class StockOut(BaseModel):

@@ -31,7 +31,7 @@ export default function PortfolioPanel({
     setBusy(true);
     setError(null);
     try {
-      const portfolio = await api.updatePortfolio(pending.map((p) => p.symbol));
+      const portfolio = await api.updatePortfolio(pending.map((p) => ({ symbol: p.symbol, name: p.name })));
       onUpdated(portfolio.stocks.map((s) => s.symbol));
       setPending([]);
     } catch {

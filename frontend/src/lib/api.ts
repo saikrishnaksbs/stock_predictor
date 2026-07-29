@@ -135,7 +135,7 @@ export const api = {
     request<User>("/users/me/timezone", { method: "PUT", body: JSON.stringify({ timezone }) }),
 
   getPortfolio: () => request<Portfolio>("/portfolio"),
-  updatePortfolio: (symbols: string[]) =>
+  updatePortfolio: (symbols: { symbol: string; name?: string | null }[]) =>
     request<Portfolio>("/portfolio", { method: "POST", body: JSON.stringify({ symbols }) }),
   getWishlist: () => request<{ user_id: string; wishlist: Stock[] }>("/wishlist"),
 

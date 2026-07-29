@@ -20,7 +20,7 @@ from app.mongo import init_indexes_and_collections, portfolio, sentiment_scores,
 from app.prediction import predict_price_curve
 from app.scraper import scraper_manager
 from app.schemas import (
-    UserCreate, UserLogin, UserOut, TokenOut, PortfolioCreate, PortfolioOut, StockOut, StockTimeSeriesOut,
+    UserCreate, UserLogin, UserOut, TokenOut, PortfolioCreate, PortfolioOut, PortfolioSymbolIn, StockOut, StockTimeSeriesOut,
     PricePoint, SymbolSuggestion, WishlistOut, SentimentOut, SentimentArticle, PredictionOut, ArticleFullText,
     ArticleSummary, UserUpdateTimezone,
 )
@@ -104,15 +104,22 @@ def ensure_symbol_tracked(symbol: str, name: Optional[str]):
     sentiment_scraper_manager.ensure_started(symbol, news_query_for(symbol, name))
 
 
-def add_to_portfolio(user_id: ObjectId, symbol: str) -> StockOut:
-    name = DEFAULT_SYMBOL_NAMES.get(symbol)
-    ensure_symbol_tracked(symbol, name)
-    portfolio.update_one(
-        {"user_id": user_id, "symbol": symbol},
-        {"$setOnInsert": {"name": name, "added_at": dt.datetime.now(dt.timezone.utc)}},
-        upsert=True,
-    )
-    return StockOut(symbol=symbol, name=name)
+def add_to_portfolio(user_id: ObjectId, symbol: str, name: Optional[str] = None) -> StockOut:
+    """`name` is whatever the caller knows (e.g. from a search result); for
+    the built-in gold/silver aliases it's always available even if the
+    caller doesn't pass one. A name backfills onto an already-existing
+    portfolio row too, so a stock added before its name was wired through
+    correctly (or a bare-ticker fallback) gets fixed on the next add — this
+    matters because news_query_for needs the real name, not just a ticker,
+    to find relevant articles."""
+    resolved_name = name or DEFAULT_SYMBOL_NAMES.get(symbol)
+    ensure_symbol_tracked(symbol, resolved_name)
+    update = {"$setOnInsert": {"added_at": dt.datetime.now(dt.timezone.utc)}}
+    if resolved_name:
+        update["$set"] = {"name": resolved_name}
+    portfolio.update_one({"user_id": user_id, "symbol": symbol}, update, upsert=True)
+    doc = portfolio.find_one({"user_id": user_id, "symbol": symbol})
+    return StockOut(symbol=symbol, name=doc.get("name") if doc else resolved_name)
 
 
 def add_to_wishlist(user_id: ObjectId, symbol: str, name: Optional[str], exchange: Optional[str]):
@@ -215,11 +222,19 @@ def update_timezone(payload: UserUpdateTimezone, user_id: ObjectId = Depends(get
 def create_or_update_portfolio(payload: PortfolioCreate, user_id: ObjectId = Depends(get_current_user_id)):
     """Attach the given stock symbols to the authenticated user's portfolio
     and make sure each one has a live scraper thread running."""
-    requested = [s.strip().upper() for s in payload.symbols if s.strip()]
+    name_by_symbol: dict[str, Optional[str]] = {}
+    requested_symbols = []
+    for item in payload.symbols:
+        symbol = item.symbol.strip().upper()
+        if not symbol:
+            continue
+        requested_symbols.append(symbol)
+        if item.name:
+            name_by_symbol[symbol] = item.name
     # Gold and silver are always included, even if the caller didn't ask for them.
-    all_symbols = list(dict.fromkeys(settings.default_symbols + requested))
+    all_symbols = list(dict.fromkeys(settings.default_symbols + requested_symbols))
 
-    stocks_out = [add_to_portfolio(user_id, symbol) for symbol in all_symbols]
+    stocks_out = [add_to_portfolio(user_id, symbol, name_by_symbol.get(symbol)) for symbol in all_symbols]
 
     return PortfolioOut(user_id=str(user_id), stocks=stocks_out, wishlist=get_wishlist(user_id))
 
