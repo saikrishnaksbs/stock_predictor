@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { api, type User } from "@/lib/api";
 import { clearSession, setSession } from "@/lib/auth";
@@ -75,6 +76,22 @@ export default function Navbar({ user }: { user: User }) {
             {user.timezone}
           </div>
         </div>
+
+        <Link
+          href="/dashboard/compare"
+          style={{
+            fontSize: 12,
+            fontWeight: 600,
+            padding: "6px 12px",
+            borderRadius: 8,
+            border: "1px solid var(--border)",
+            background: "var(--page-plane)",
+            color: "var(--text-secondary)",
+            textDecoration: "none",
+          }}
+        >
+          Compare
+        </Link>
 
         <div style={{ position: "relative" }}>
           <button

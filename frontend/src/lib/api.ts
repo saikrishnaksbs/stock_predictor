@@ -85,6 +85,11 @@ export type Sentiment = {
 export type PredictedPoint = {
   time: string;
   price: number;
+  // 95% prediction-interval bounds. Null/absent when the series is too flat
+  // or too short to have a meaningful spread — render the projection without
+  // a band in that case rather than collapsing it to a zero-height sliver.
+  lower?: number | null;
+  upper?: number | null;
 };
 
 export type Prediction = {

@@ -1,0 +1,29 @@
+{
+  "cli": {
+    "version": ">= 21.4.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "preview": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://stock-predictor-api-w4gq.onrender.com"
+      }
+    },
+    "production": {
+      "android": {
+        "buildType": "apk"
+      },
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_API_BASE": "https://stock-predictor-api-w4gq.onrender.com"
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

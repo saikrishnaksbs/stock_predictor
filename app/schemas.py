@@ -116,6 +116,11 @@ class ArticleSummary(BaseModel):
 class PredictedPoint(BaseModel):
     time: dt.datetime
     price: float
+    # 95% prediction-interval bounds. Absent on the insufficient-data path,
+    # and equal to `price` when the series is flat enough to have no residual
+    # spread, so consumers must tolerate both.
+    lower: Optional[float] = None
+    upper: Optional[float] = None
 
 
 class SentimentSummary(BaseModel):

@@ -44,6 +44,23 @@ def predict_price_curve(symbol: str) -> dict:
     slope, intercept = np.polyfit(x, prices, 1)
     last_price = float(prices[-1])
 
+    # How badly did the straight line miss the actual prices? That residual
+    # spread is what makes the projection's uncertainty band meaningful — a
+    # noisy series earns a wide band, a clean trend a narrow one. Needs n > 2
+    # because a 2-point fit is exact by construction (zero residuals) and
+    # would otherwise claim perfect certainty.
+    n = len(prices)
+    fitted = slope * x + intercept
+    dof = n - 2
+    resid_se = float(np.sqrt(np.sum((prices - fitted) ** 2) / dof)) if dof > 0 else 0.0
+    # Same float-residue problem as the slope below: a perfectly linear or
+    # constant series leaves residuals of ~1e-14 rather than exactly 0. Snap
+    # anything under a tenth of a paisa away so "no real spread" means no band.
+    if resid_se < 1e-3:
+        resid_se = 0.0
+    x_mean = float(np.mean(x))
+    sxx = float(np.sum((x - x_mean) ** 2))
+
     # A least-squares fit over a genuinely-constant series (e.g. markets
     # closed, price hasn't ticked) still returns a nonzero slope of ~1e-12 —
     # floating-point residue from the solve, not a real trend. Left as-is,
@@ -63,17 +80,34 @@ def predict_price_curve(symbol: str) -> dict:
 
     predicted = []
     for step in range(1, settings.prediction_horizon_points + 1):
+        # Rounded to paise: these are currency values, not raw floats,
+        # and rounding also guarantees a flat trend renders as bit-identical
+        # numbers rather than accumulating its own float noise per step.
+        price = round(max(0.0, last_price + adjusted_slope * step), 2)
+
+        # Standard prediction-interval width for a least-squares line,
+        # evaluated at the future x. It widens with distance from the centre
+        # of the observed data, which is why the band fans out over the
+        # horizon instead of running parallel to the projection.
+        if resid_se > 0.0 and sxx > 0.0:
+            x_future = float(n - 1 + step)
+            se_pred = resid_se * np.sqrt(1.0 + 1.0 / n + ((x_future - x_mean) ** 2) / sxx)
+            half_width = float(settings.prediction_interval_z * se_pred)
+        else:
+            # A genuinely flat/constant series has no residual spread, so it
+            # gets no band — consistent with snapping its slope to zero above.
+            half_width = 0.0
+
         predicted.append({
             "time": (last_time + interval * step).isoformat(),
-            # Rounded to paise: these are currency values, not raw floats,
-            # and rounding also guarantees a flat trend renders as bit-identical
-            # numbers rather than accumulating its own float noise per step.
-            "price": round(max(0.0, last_price + adjusted_slope * step), 2),
+            "price": price,
+            "lower": round(max(0.0, price - half_width), 2),
+            "upper": round(price + half_width, 2),
         })
 
     return {
         "symbol": symbol,
-        "method": "linear-trend + sentiment-bias (heuristic, not a trained model)",
+        "method": "linear-trend + sentiment-bias, 95% prediction interval (heuristic, not a trained model)",
         "trend_slope_per_point": float(slope),
         "sentiment_adjusted_slope_per_point": float(adjusted_slope),
         "sentiment": sentiment,

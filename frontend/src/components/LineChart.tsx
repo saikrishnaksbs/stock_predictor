@@ -21,8 +21,32 @@ export default function LineChart({ data, color, height = 220, predicted = [] }:
   const points = useMemo(() => [...data].reverse(), [data]);
   const totalPoints = points.length + predicted.length;
 
+  // Only draw a band when the backend actually returned bounds that differ
+  // from the projection — a flat series reports lower == price == upper, and
+  // filling that produces a zero-height smear rather than useful information.
+  const hasBand = useMemo(
+    () =>
+      predicted.some(
+        (p) =>
+          typeof p.lower === "number" &&
+          typeof p.upper === "number" &&
+          p.upper - p.lower > 0
+      ),
+    [predicted]
+  );
+
   const { min, max } = useMemo(() => {
-    const allPrices = [...points.map((p) => p.price), ...predicted.map((p) => p.price)];
+    const allPrices = [
+      ...points.map((p) => p.price),
+      ...predicted.map((p) => p.price),
+      // The band is the outermost thing drawn, so the y-scale has to cover it
+      // or the cone gets clipped at the top and bottom of the plot area.
+      ...(hasBand
+        ? predicted.flatMap((p) =>
+            typeof p.lower === "number" && typeof p.upper === "number" ? [p.lower, p.upper] : []
+          )
+        : []),
+    ];
     if (allPrices.length === 0) return { min: 0, max: 1 };
     let lo = Math.min(...allPrices);
     let hi = Math.max(...allPrices);
@@ -36,7 +60,7 @@ export default function LineChart({ data, color, height = 220, predicted = [] }:
     }
     const pad = (hi - lo) * 0.1;
     return { min: lo - pad, max: hi + pad };
-  }, [points, predicted]);
+  }, [points, predicted, hasBand]);
 
   const innerW = width - MARGIN.left - MARGIN.right;
   const innerH = height - MARGIN.top - MARGIN.bottom;
@@ -68,6 +92,32 @@ export default function LineChart({ data, color, height = 220, predicted = [] }:
     });
     return d;
   }, [points, predicted, innerW, innerH, totalPoints]);
+
+  // Cone of uncertainty: out along the upper bound, back along the lower.
+  // Both ends anchor at the last actual price, where the interval is still
+  // zero-width, so the band opens from the real data rather than starting
+  // out already wide.
+  const bandPath = useMemo(() => {
+    if (!hasBand || points.length === 0) return "";
+    const startIdx = points.length - 1;
+    const anchorY = yAt(points[startIdx].price).toFixed(2);
+    const anchorX = xAt(startIdx).toFixed(2);
+
+    let up = `M${anchorX},${anchorY}`;
+    predicted.forEach((p, i) => {
+      const v = typeof p.upper === "number" ? p.upper : p.price;
+      up += ` L${xAt(startIdx + 1 + i).toFixed(2)},${yAt(v).toFixed(2)}`;
+    });
+
+    let down = "";
+    for (let i = predicted.length - 1; i >= 0; i--) {
+      const p = predicted[i];
+      const v = typeof p.lower === "number" ? p.lower : p.price;
+      down += ` L${xAt(startIdx + 1 + i).toFixed(2)},${yAt(v).toFixed(2)}`;
+    }
+
+    return `${up}${down} Z`;
+  }, [hasBand, points, predicted, innerW, innerH, min, max, totalPoints]);
 
   function handleMove(e: React.MouseEvent<SVGRectElement>) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -119,7 +169,11 @@ export default function LineChart({ data, color, height = 220, predicted = [] }:
         height={height}
         viewBox={`0 0 ${width} ${height}`}
         role="img"
-        aria-label="Price over time, with a projected trend"
+        aria-label={
+          hasBand
+            ? "Price over time, with a projected trend and its 95% prediction interval"
+            : "Price over time, with a projected trend"
+        }
       >
         <g transform={`translate(${MARGIN.left},${MARGIN.top})`}>
           {[0, 0.5, 1].map((t) => (
@@ -136,6 +190,8 @@ export default function LineChart({ data, color, height = 220, predicted = [] }:
 
           <path d={areaPath} fill={color} opacity={0.1} stroke="none" />
           <path d={linePath} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+
+          {bandPath && <path d={bandPath} fill={color} opacity={0.14} stroke="none" />}
 
           {predictedPath && (
             <path
@@ -161,7 +217,7 @@ export default function LineChart({ data, color, height = 220, predicted = [] }:
               fontSize={10}
               fill="var(--text-muted)"
             >
-              projected
+              {hasBand ? "projected · 95%" : "projected"}
             </text>
           )}
 

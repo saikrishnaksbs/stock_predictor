@@ -35,6 +35,12 @@ class Settings(BaseSettings):
     prediction_lookback_points: int = 30
     prediction_sentiment_lookback_hours: int = 24
 
+    # Z-score for the prediction interval drawn around the projected curve.
+    # 1.96 = 95%. The band is a *prediction* interval (where a future observed
+    # price should land), not a confidence interval on the trend line itself —
+    # the latter would be misleadingly narrow for what the chart implies.
+    prediction_interval_z: float = 1.96
+
     # Included in every user's portfolio automatically, and scraped from
     # app startup regardless of whether any user has requested them yet.
     default_symbols: list[str] = ["GOLD_10G", "SILVER_1KG"]
